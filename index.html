@@ -73,6 +73,7 @@
     .pdfx .area-mid{fill:#6e6e6e;opacity:.65;}
     .pdfx .legend text{font-size:22px;}
     .pdfx .legend-line{stroke-width:6;fill:none;}
+    .pdfx .tip{position:absolute;pointer-events:none;background:#222;color:#fff;border-radius:8px;padding:6px 8px;font:13px system-ui,-apple-system,Segoe UI,Roboto,Arial;opacity:0;transition:opacity .15s ease}
 
     /* ======= Frequency over time —— 前缀 .freq ======= */
     .freq svg{width:100%;height:340px;display:block}
@@ -566,6 +567,7 @@
     <section id="pdf-overlap" class="pdfx">
       <h2>Chart 11 (function)</h2>
       <div id="pdfx-chart"></div>
+      <div id="pdfx-tip" class="tip"></div>
       <script>
       (function(){
         const W=1150,H=760,m={top:28,right:48,bottom:78,left:110};
@@ -577,6 +579,7 @@
         const x=d3.scaleLinear().domain([-2,5]).range([0,iw]);
         const y=d3.scaleLinear().domain([0,0.35]).range([ih,0]);
 
+        // grid + axes
         g.append('g').attr('class','grid')
           .attr('transform',`translate(0,${ih})`)
           .call(d3.axisBottom(x).ticks(14).tickSize(-ih).tickFormat(''));
@@ -585,26 +588,30 @@
         g.append('g').attr('class','axis').attr('transform',`translate(0,${ih})`).call(d3.axisBottom(x).ticks(14));
         g.append('g').attr('class','axis').call(d3.axisLeft(y).ticks(8));
 
+        // labels
         g.append('text').attr('x',iw/2).attr('y',ih+52).attr('text-anchor','middle').attr('font-size',28).text('x');
         g.append('text').attr('transform','rotate(-90)').attr('x',-ih/2).attr('y',-70)
           .attr('text-anchor','middle').attr('font-size',28).text('Probability Density');
 
+        // baseline + dashed verticals
         g.append('line').attr('class','baseline').attr('x1',0).attr('y1',y(0)).attr('x2',iw).attr('y2',y(0));
         const a=0.85,b=1.45;
-        g.append('line').attr('class','vline').attr('x1',x(a)).attr('x2',x(a)).attr('y1',0).attr('y2',ih);
-        g.append('line').attr('class','vline').attr('x1',x(b)).attr('x2',x(b)).attr('y1',0).attr('y2',ih);
+        const vA=g.append('line').attr('class','vline').attr('x1',x(a)).attr('x2',x(a)).attr('y1',0).attr('y2',ih);
+        const vB=g.append('line').attr('class','vline').attr('x1',x(b)).attr('x2',x(b)).attr('y1',0).attr('y2',ih);
 
+        // pdfs
         const normal=(mu,s)=>z=>(1/(s*Math.sqrt(2*Math.PI)))*Math.exp(-0.5*((z-mu)/s)**2);
         const clampTiny=v=>v<1e-4?0:v;
 
         const pdf0_raw=normal(0.0,1.00), A0=0.59;   // 黄
         const pdf1_raw=normal(2.1,0.70), A1=0.44;   // 蓝
+        // —— 黄线平滑起步：x<=x0 为 0；x0~x1 线性爬坡；x>=x1 用正态 —— 
         const x0=-1.35, x1=-1.10;
         function pdf0(xv){
           if(xv<=x0) return 0;
           if(xv<x1){
             const y1=A0*pdf0_raw(x1);
-            const t=(xv-x0)/(x1-x0);
+            const t=(xv-x0)/(x1-x0);          // 线性从 0 -> y1
             return t*y1;
           }
           return clampTiny(A0*pdf0_raw(xv));
@@ -613,6 +620,7 @@
 
         const xs=d3.range(-2,5.0001,0.01);
 
+        // 曲线数据（首尾加0）
         const data0=[{x:-2,y:0},...xs.map(xx=>({x:xx,y:pdf0(xx)})),{x:5,y:0}];
         const data1=[{x:-2,y:0},...xs.map(xx=>({x:xx,y:pdf1(xx)})),{x:5,y:0}];
 
@@ -621,33 +629,39 @@
 
         const col0='#f0b233', col1='#1f8a9e';
 
+        // ===== 阴影 =====
+        // 左段：[-2, a] 蓝线到基线（浅灰）
         const leftXs=xs.filter(v=>v<=a);
         const areaLeft=[{x:-2,y:0},...leftXs.map(v=>({x:v,y:pdf1(v)})),{x:a,y:pdf1(a)},{x:a,y:0}];
         g.append('path').datum(areaLeft).attr('class','area-left').attr('d',area);
 
+        // 中段深灰：[a,b] min(pdf0,pdf1) 到基线
         const midXs=xs.filter(v=>v>=a && v<=b);
         const minArr=midXs.map(v=>({x:v,y:Math.min(pdf0(v),pdf1(v))}));
         const areaMid=[{x:a,y:0},{x:a,y:Math.min(pdf0(a),pdf1(a))},...minArr,{x:b,y:Math.min(pdf0(b),pdf1(b))},{x:b,y:0}];
         g.append('path').datum(areaMid).attr('class','area-mid').attr('d',area);
 
+        // 中段浅灰（max-min）
         const maxArr=midXs.map(v=>({x:v,y:Math.max(pdf0(v),pdf1(v))}));
         const areaBetween=[{x:a,y:0},{x:a,y:Math.max(pdf0(a),pdf1(a))},...maxArr,{x:b,y:Math.max(pdf0(b),pdf1(b))},{x:b,y:0}];
-        g.append('path').datum(areaBetween).attr('class','area-between').attr('d',area);
-        g.append('path').datum(areaMid).attr('class','area-mid').attr('d',area);
+        g.append('path').datum(areaBetween).attr('class','area-between').attr('d',area);  // 先画
+        g.append('path').datum(areaMid).attr('class','area-mid').attr('d',area);          // 再把深灰盖上
 
+        // 右段：[b,5] 黄线到基线（浅灰）
         const rightXs=xs.filter(v=>v>=b);
         const areaRight=[{x:b,y:0},{x:b,y:pdf0(b)},...rightXs.map(v=>({x:v,y:pdf0(v)})),{x:5,y:0}];
         g.append('path').datum(areaRight).attr('class','area-right').attr('d',area);
 
+        // 曲线与过渡动画
         const p0=g.append('path').datum(data0).attr('fill','none').attr('stroke',col0).attr('stroke-width',4).attr('d',line);
         const p1=g.append('path').datum(data1).attr('fill','none').attr('stroke',col1).attr('stroke-width',4).attr('d',line);
-
         [p0,p1].forEach(path=>{
           const len=path.node().getTotalLength();
           path.attr('stroke-dasharray',`${len} ${len}`).attr('stroke-dashoffset',len)
               .transition().duration(1400).ease(d3.easeCubicOut).attr('stroke-dashoffset',0);
         });
 
+        // 图例
         const legend=g.append('g').attr('class','legend').attr('transform',`translate(${iw-360},10)`);
         const l0=legend.append('g').attr('transform','translate(0,14)');
         l0.append('line').attr('class','legend-line').attr('x1',0).attr('x2',80).attr('y1',0).attr('y2',0).attr('stroke',col0);
@@ -655,6 +669,42 @@
         const l1=legend.append('g').attr('transform','translate(0,54)');
         l1.append('line').attr('class','legend-line').attr('x1',0).attr('x2',80).attr('y1',0).attr('y2',0).attr('stroke',col1);
         l1.append('text').attr('x',100).attr('y',7).html('<tspan font-style="italic">p</tspan>(x, y = 1) * <tspan font-style="italic">v</tspan>(x)').style('dominant-baseline','middle');
+
+        // ===== Interaction: 鼠标移动显示竖线与两个 PDF 值 =====
+        const tip=d3.select('#pdfx-tip');
+        const focusLine=g.append('line').attr('y1',0).attr('y2',ih).attr('stroke','#000').attr('stroke-opacity',.2).style('display','none');
+        const dot0=g.append('circle').attr('r',4).attr('fill',col0).style('display','none');
+        const dot1=g.append('circle').attr('r',4).attr('fill',col1).style('display','none');
+
+        svg.on('mousemove', (ev)=>{
+          const [mx] = d3.pointer(ev, g.node());
+          const xx = Math.max(-2, Math.min(5, x.invert(mx)));
+          const y0 = pdf0(xx), y1 = pdf1(xx);
+
+          focusLine.attr('x1',x(xx)).attr('x2',x(xx)).style('display',null);
+          dot0.attr('cx',x(xx)).attr('cy',y(y0)).style('display',null);
+          dot1.attr('cx',x(xx)).attr('cy',y(y1)).style('display',null);
+
+          tip.style('opacity',1)
+             .style('left',(ev.pageX+12)+'px')
+             .style('top', (ev.pageY-10)+'px')
+             .html(`<b>x = ${xx.toFixed(2)}</b><br>
+                    <span style="color:${col0}">p(x,0)*v(x)</span>: ${y0.toFixed(3)}<br>
+                    <span style="color:${col1}">p(x,1)*v(x)</span>: ${y1.toFixed(3)}`);
+        }).on('mouseleave', ()=>{
+          focusLine.style('display','none');
+          dot0.style('display','none');
+          dot1.style('display','none');
+          tip.style('opacity',0);
+        });
+
+        // 可点击切换阴影显示（额外交互）
+        let shadeOn=true;
+        svg.on('click', ()=>{
+          shadeOn=!shadeOn;
+          g.selectAll('.area-left,.area-mid,.area-between,.area-right')
+           .transition().duration(200).style('opacity', shadeOn? null : 0);
+        });
       })();
       </script>
     </section>
